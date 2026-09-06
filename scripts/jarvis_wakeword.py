@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 
+import json
 import queue
 import subprocess
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 import sounddevice as sd
@@ -11,6 +14,9 @@ from openwakeword.model import Model
 RATE = 16000
 BLOCK = 1280
 THRESHOLD = 0.50
+
+API_URL = "http://127.0.0.1:8000/v1/chat/completions"
+API_MODEL = "qwen3.5:9b"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 OPENJARVIS_PYTHON = REPO_ROOT / ".venv" / "bin" / "python"
@@ -39,9 +45,6 @@ def wait_for_wake(model, device_id):
 
     print('[STANDBY] Waiting for "Hey Jarvis"...')
 
-    # Importante:
-    # este stream existe SOMENTE enquanto esperamos o wake word.
-    # Ao retornar desta função, o microfone é liberado.
     with sd.InputStream(
         device=device_id,
         samplerate=RATE,
@@ -97,6 +100,58 @@ def listen_for_command():
     return transcript
 
 
+def ask_jarvis(command):
+    payload = {
+        "model": API_MODEL,
+        "messages": [
+            {
+                "role": "user",
+                "content": command,
+            }
+        ],
+        "stream": False,
+    }
+
+    request = urllib.request.Request(
+        API_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            data = json.loads(response.read().decode("utf-8"))
+
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        print(f"[API ERROR] HTTP {exc.code}")
+        print(body)
+        return None
+
+    except urllib.error.URLError as exc:
+        print(f"[API ERROR] Cannot reach OpenJarvis: {exc}")
+        return None
+
+    except TimeoutError:
+        print("[API ERROR] OpenJarvis request timed out.")
+        return None
+
+    try:
+        answer = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        print("[API ERROR] Unexpected response:")
+        print(json.dumps(data, indent=2))
+        return None
+
+    if not answer:
+        return None
+
+    return answer.strip()
+
+
 def main():
     device_id = find_rdp_source()
     device_name = sd.query_devices(device_id)["name"]
@@ -105,6 +160,8 @@ def main():
     print(f"Microphone : {device_id} - {device_name}")
     print(f"Sample rate: {RATE} Hz")
     print(f"Threshold  : {THRESHOLD}")
+    print(f"API        : {API_URL}")
+    print(f"Model      : {API_MODEL}")
     print()
 
     print("Loading Hey Jarvis model...")
@@ -128,21 +185,35 @@ def main():
             print(f"Wake score: {score:.3f}")
             print("====================================")
 
-            # Limpa o histórico do detector antes da próxima rodada.
             model.reset()
 
-            # Neste momento wait_for_wake() já fechou o InputStream,
-            # portanto jarvis_listen.py pode usar o microfone.
             transcript = listen_for_command()
 
-            if transcript:
+            if not transcript:
+                print()
+                print("[NO COMMAND DETECTED]")
+                print()
+                continue
+
+            print()
+            print("====================================")
+            print(f"COMMAND: {transcript}")
+            print("====================================")
+            print()
+
+            print("[THINKING] Sending command to OpenJarvis...")
+
+            answer = ask_jarvis(transcript)
+
+            if answer:
                 print()
                 print("====================================")
-                print(f"COMMAND: {transcript}")
+                print("JARVIS RESPONSE:")
+                print(answer)
                 print("====================================")
             else:
                 print()
-                print("[NO COMMAND DETECTED]")
+                print("[NO RESPONSE FROM JARVIS]")
 
             print()
 
