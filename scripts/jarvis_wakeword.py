@@ -21,6 +21,7 @@ API_MODEL = "qwen3.5:9b"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 OPENJARVIS_PYTHON = REPO_ROOT / ".venv" / "bin" / "python"
 LISTENER_SCRIPT = REPO_ROOT / "scripts" / "jarvis_listen.py"
+SPEAKER_SCRIPT = REPO_ROOT / "scripts" / "jarvis_speak.py"
 
 
 def find_rdp_source():
@@ -152,6 +153,22 @@ def ask_jarvis(command):
     return answer.strip()
 
 
+
+def speak_response(text):
+    process = subprocess.run(
+        [
+            str(OPENJARVIS_PYTHON),
+            str(SPEAKER_SCRIPT),
+        ],
+        cwd=str(REPO_ROOT),
+        input=text,
+        text=True,
+    )
+
+    if process.returncode != 0:
+        print(f"[TTS ERROR] Speaker exited with code {process.returncode}")
+
+
 def main():
     device_id = find_rdp_source()
     device_name = sd.query_devices(device_id)["name"]
@@ -211,6 +228,9 @@ def main():
                 print("JARVIS RESPONSE:")
                 print(answer)
                 print("====================================")
+                print()
+
+                speak_response(answer)
             else:
                 print()
                 print("[NO RESPONSE FROM JARVIS]")
