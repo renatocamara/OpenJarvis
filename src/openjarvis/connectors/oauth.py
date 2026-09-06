@@ -110,7 +110,11 @@ OAUTH_PROVIDERS: Dict[str, OAuthProvider] = {
         display_name="Spotify",
         auth_endpoint="https://accounts.spotify.com/authorize",
         token_endpoint="https://accounts.spotify.com/api/token",
-        scopes=["user-read-recently-played"],
+        scopes=[
+            "user-read-recently-played",
+            "user-read-playback-state",
+            "user-modify-playback-state",
+        ],
         setup_url="https://developer.spotify.com/dashboard",
         setup_hint=("Create an app, add redirect URI: http://127.0.0.1:8888/callback"),
         callback_port=8888,
