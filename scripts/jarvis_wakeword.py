@@ -3,6 +3,7 @@
 import json
 import queue
 import subprocess
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -64,10 +65,8 @@ def wait_for_wake(model, device_id):
                 return score
 
 
-def listen_for_command():
-    print()
-    print("[ACTIVATED] Jarvis is listening...")
-    print()
+def start_stt_process():
+    print("[STT] Starting persistent speech recognition engine...")
 
     process = subprocess.Popen(
         [
@@ -75,30 +74,97 @@ def listen_for_command():
             str(LISTENER_SCRIPT),
         ],
         cwd=str(REPO_ROOT),
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
         bufsize=1,
     )
 
-    transcript = None
-
+    assert process.stdin is not None
     assert process.stdout is not None
 
-    for line in process.stdout:
-        print(line, end="")
+    while True:
+        line = process.stdout.readline()
 
-        if line.startswith("JARVIS_TRANSCRIPT="):
-            transcript = line.split("=", 1)[1].strip()
+        if not line:
+            if process.poll() is not None:
+                raise RuntimeError(
+                    f"STT process exited with code {process.returncode}"
+                )
+            continue
 
-    return_code = process.wait()
+        line = line.strip()
 
-    if return_code != 0:
-        print()
-        print(f"[ERROR] Listener exited with code {return_code}")
+        if line:
+            print(line)
+
+        if line.startswith("JARVIS_STT_READY="):
+            break
+
+    print("[STT] Speech recognition engine ready.")
+    print()
+
+    return process
+
+
+def stop_stt_process(process):
+    if process is None:
+        return
+
+    if process.poll() is None:
+        process.terminate()
+
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+
+
+def listen_for_command(process):
+    print()
+    print("[ACTIVATED] Jarvis is listening...")
+    print()
+
+    if process.poll() is not None:
+        print("[STT ERROR] Speech recognition engine is not running.")
         return None
 
-    return transcript
+    assert process.stdin is not None
+    assert process.stdout is not None
+
+    request = json.dumps({"action": "listen"})
+
+    process.stdin.write(request + "\n")
+    process.stdin.flush()
+
+    transcript = None
+
+    while True:
+        line = process.stdout.readline()
+
+        if not line:
+            if process.poll() is not None:
+                print(
+                    f"[STT ERROR] Speech recognition engine exited "
+                    f"with code {process.returncode}"
+                )
+                return None
+            continue
+
+        print(line, end="")
+
+        stripped = line.strip()
+
+        if stripped.startswith("JARVIS_TRANSCRIPT="):
+            transcript = stripped.split("=", 1)[1].strip()
+
+        elif stripped.startswith("JARVIS_STT_DONE="):
+            return transcript
+
+        elif stripped.startswith("JARVIS_STT_ERROR="):
+            print(f"[STT ERROR] {stripped.split('=', 1)[1]}")
+            return None
 
 
 def ask_jarvis(command):
@@ -123,8 +189,13 @@ def ask_jarvis(command):
     )
 
     try:
+        api_start = time.perf_counter()
+
         with urllib.request.urlopen(request, timeout=120) as response:
             data = json.loads(response.read().decode("utf-8"))
+
+        api_elapsed = time.perf_counter() - api_start
+        print(f"JARVIS_API_TIME={api_elapsed:.2f}", flush=True)
 
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
@@ -278,6 +349,7 @@ def main():
     )
 
     print()
+    stt_process = start_stt_process()
     tts_process = start_tts_process()
 
     print("Ctrl+C to stop.")
@@ -295,7 +367,7 @@ def main():
 
             model.reset()
 
-            transcript = listen_for_command()
+            transcript = listen_for_command(stt_process)
 
             if not transcript:
                 print()
@@ -333,6 +405,7 @@ def main():
         print("Jarvis always-listening service stopped.")
 
     finally:
+        stop_stt_process(stt_process)
         stop_tts_process(tts_process)
 
 
