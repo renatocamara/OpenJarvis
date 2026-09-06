@@ -154,19 +154,108 @@ def ask_jarvis(command):
 
 
 
-def speak_response(text):
-    process = subprocess.run(
+def start_tts_process():
+    print("[TTS] Starting persistent voice engine...")
+
+    process = subprocess.Popen(
         [
             str(OPENJARVIS_PYTHON),
             str(SPEAKER_SCRIPT),
         ],
         cwd=str(REPO_ROOT),
-        input=text,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
         text=True,
+        bufsize=1,
     )
 
-    if process.returncode != 0:
-        print(f"[TTS ERROR] Speaker exited with code {process.returncode}")
+    assert process.stdin is not None
+    assert process.stdout is not None
+
+    while True:
+        line = process.stdout.readline()
+
+        if not line:
+            if process.poll() is not None:
+                raise RuntimeError(
+                    f"TTS process exited with code {process.returncode}"
+                )
+            continue
+
+        line = line.strip()
+
+        if line:
+            print(line)
+
+        if line.startswith("JARVIS_TTS_READY="):
+            break
+
+    print("[TTS] Voice engine ready.")
+    print()
+
+    return process
+
+
+def stop_tts_process(process):
+    if process is None:
+        return
+
+    if process.poll() is None:
+        process.terminate()
+
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+
+
+def speak_response(process, text):
+    if process.poll() is not None:
+        print("[TTS ERROR] Voice engine is not running.")
+        return
+
+    assert process.stdin is not None
+    assert process.stdout is not None
+
+    print("[SPEAKING]")
+
+    request = json.dumps(
+        {"text": text},
+        ensure_ascii=False,
+    )
+
+    process.stdin.write(request + "\n")
+    process.stdin.flush()
+
+    while True:
+        line = process.stdout.readline()
+
+        if not line:
+            if process.poll() is not None:
+                print(
+                    f"[TTS ERROR] Voice engine exited "
+                    f"with code {process.returncode}"
+                )
+                return
+            continue
+
+        line = line.strip()
+
+        if line.startswith("JARVIS_TTS_SYNTH="):
+            seconds = line.split("=", 1)[1]
+            print(f"[TTS] Synthesized in {seconds}s")
+
+        elif line.startswith("JARVIS_TTS_DONE="):
+            seconds = line.split("=", 1)[1]
+            print(f"[TTS] Speech completed in {seconds}s")
+            return
+
+        elif line.startswith("JARVIS_TTS_ERROR="):
+            print(f"[TTS ERROR] {line.split('=', 1)[1]}")
+            return
+
+        elif line:
+            print(line)
 
 
 def main():
@@ -189,6 +278,8 @@ def main():
     )
 
     print()
+    tts_process = start_tts_process()
+
     print("Ctrl+C to stop.")
     print()
 
@@ -230,7 +321,7 @@ def main():
                 print("====================================")
                 print()
 
-                speak_response(answer)
+                speak_response(tts_process, answer)
             else:
                 print()
                 print("[NO RESPONSE FROM JARVIS]")
@@ -240,6 +331,9 @@ def main():
     except KeyboardInterrupt:
         print()
         print("Jarvis always-listening service stopped.")
+
+    finally:
+        stop_tts_process(tts_process)
 
 
 if __name__ == "__main__":
