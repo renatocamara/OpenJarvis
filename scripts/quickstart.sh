@@ -148,8 +148,8 @@ fi
 
 # ── 7. Install Python dependencies ──────────────────────────────────
 info "Installing Python dependencies..."
-uv sync --extra desktop --extra tools-search --quiet 2>/dev/null \
-  || uv sync --extra desktop --extra tools-search
+uv sync --inexact --extra desktop --extra tools-search --quiet 2>/dev/null \
+  || uv sync --inexact --extra desktop --extra tools-search
 ok "Python dependencies installed"
 
 # ── 7b. Build Rust extension ──────────────────────────────────────
